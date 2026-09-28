@@ -1,3 +1,166 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>角色工坊 · AI Character Lab</title></head><body><main class="shell"><header class="top"><div class="brand">角色<i>工坊</i> / LAB</div><div class="badge">LOCAL DEMO · v0.1</div></header><section class="hero"><div class="eyebrow">CHARACTER GENERATOR</div><h1>把灵感，铸造成角色。</h1><p>选择风格与特征，即刻生成可继续迭代的角色概念。</p></section><div class="layout"><aside class="card controls"><div class="section"><div class="label">角色名称</div><input id="name" type="text" value="深海先知 · 鲸鱼娘" maxlength="24"></div><div class="section"><div class="label">角色原型</div><div class="choices" data-kind="species"><button class="chip active">鲸鱼娘</button><button class="chip">小恶魔</button><button class="chip">森林精灵</button><button class="chip">机械兽</button></div></div><div class="section"><div class="label">视觉风格</div><div class="choices" data-kind="style"><button class="chip active">铸币浮雕</button><button class="chip">像素风</button><button class="chip">绘本水彩</button></div></div><div class="section"><div class="label">阵营气质</div><div class="choices" data-kind="mood"><button class="chip active">神秘</button><button class="chip">可爱</button><button class="chip">勇敢</button><button class="chip">古怪</button></div></div><div class="section"><div class="label">随机变化 <span id="variationLabel">42%</span></div><div class="range"><input id="variation" type="range" min="0" max="100" value="42"><span>抖动</span></div></div><div class="actions"><button class="primary" id="generate">✦　生成新角色</button><button class="secondary" id="shuffle" title="随机灵感">⤨</button></div><div class="notice">当前为本地程序化预览；未调用外部模型或服务。</div></aside><section class="card preview"><div class="preview-head"><div><div class="preview-title" id="previewName">深海先知 · 鲸鱼娘</div><div class="preview-sub">角色概念预览　·　可继续调整</div></div><div class="badge" id="seed">SEED 042</div></div><div class="stage coin" id="stage"><div class="halo"></div><div class="character" id="character"></div><div class="caption">✦　ABYSSAL ORACLE　✦</div></div><div class="preview-foot"><div class="tags"><span class="tag" id="styleTag">铸币浮雕</span><span class="tag" id="moodTag">神秘</span><span class="tag">原创概念</span></div><button class="export" id="export">导出 SVG</button></div></section></div></main><div class="toast" id="toast"></div>
-<script type="module" src="/src/main.ts"></script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>角色工坊 · AI Character Lab</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="top">
+        <div class="brand">角色<i>工坊</i> / LAB</div>
+        <div class="top-actions">
+          <button class="ghost-btn" id="openProviders" type="button">⚙ 提供方</button>
+          <div class="badge">LOCAL DEMO · v0.1</div>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div class="eyebrow">CHARACTER GENERATOR</div>
+        <h1>把灵感，铸造成角色。</h1>
+        <p>选择风格与特征，即刻生成可继续迭代的角色概念。</p>
+      </section>
+
+      <div class="layout">
+        <aside class="card controls">
+          <div class="section">
+            <div class="label">角色名称</div>
+            <input id="name" type="text" value="深海先知 · 鲸鱼娘" maxlength="24">
+          </div>
+
+          <div class="section">
+            <div class="label">角色原型</div>
+            <div class="choices" data-kind="species">
+              <button class="chip active">鲸鱼娘</button>
+              <button class="chip">小恶魔</button>
+              <button class="chip">森林精灵</button>
+              <button class="chip">机械兽</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="label">视觉风格</div>
+            <div class="choices" data-kind="style">
+              <button class="chip active">铸币浮雕</button>
+              <button class="chip">像素风</button>
+              <button class="chip">绘本水彩</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="label">阵营气质</div>
+            <div class="choices" data-kind="mood">
+              <button class="chip active">神秘</button>
+              <button class="chip">可爱</button>
+              <button class="chip">勇敢</button>
+              <button class="chip">古怪</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="label">随机变化 <span id="variationLabel">42%</span></div>
+            <div class="range">
+              <input id="variation" type="range" min="0" max="100" value="42">
+              <span>抖动</span>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="label">生成模型</div>
+            <select id="modelSelect" class="select"></select>
+          </div>
+
+          <div class="section">
+            <div class="label">参考图片 <span class="hint">可选</span></div>
+            <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="上传参考图片">
+              <span class="dz-icon">⇪</span>
+              <span>点击上传，或 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</span>
+            </div>
+            <input id="fileInput" type="file" accept="image/*" hidden>
+            <div class="ref-thumb" id="refThumb" hidden>
+              <img id="refImg" alt="参考图片预览">
+              <button class="ref-remove" id="refRemove" type="button" title="移除">×</button>
+            </div>
+            <textarea id="refText" rows="2" maxlength="500" placeholder="补充说明（可选）：对生成图片的额外要求…"></textarea>
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="generate">✦　生成新角色</button>
+            <button class="secondary" id="shuffle" title="随机灵感">⤨</button>
+          </div>
+          <div class="notice" id="notice">当前为本地程序化预览；配置提供方后调用真实模型。</div>
+        </aside>
+
+        <section class="card preview">
+          <div class="preview-head">
+            <div>
+              <div class="preview-title" id="previewName">深海先知 · 鲸鱼娘</div>
+              <div class="preview-sub" id="previewSub">角色概念预览　·　可继续调整</div>
+            </div>
+            <div class="badge" id="seed">SEED 042</div>
+          </div>
+          <div class="stage coin" id="stage">
+            <div class="halo"></div>
+            <div class="character" id="character"></div>
+            <img class="generated-img" id="generatedImg" alt="模型生成的角色图" hidden>
+            <div class="spinner" id="spinner" hidden><div class="spinner-ring"></div><span>模型生成中…</span></div>
+            <div class="caption" id="caption">✦　ABYSSAL ORACLE　✦</div>
+          </div>
+          <div class="preview-foot">
+            <div class="tags">
+              <span class="tag" id="styleTag">铸币浮雕</span>
+              <span class="tag" id="moodTag">神秘</span>
+              <span class="tag">原创概念</span>
+            </div>
+            <button class="export" id="export">导出图片</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div class="modal-backdrop" id="providerModal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="模型提供方">
+        <div class="modal-head">
+          <div class="modal-title">模型提供方</div>
+          <button class="modal-close" id="closeProviders" type="button" title="关闭">×</button>
+        </div>
+        <div class="provider-list" id="providerList"></div>
+        <div class="provider-empty" id="providerEmpty">还没有提供方。添加一个 OpenAI 兼容端点开始使用。</div>
+        <form class="provider-form" id="providerForm">
+          <div class="pf-title" id="providerFormTitle">添加 Provider</div>
+          <div class="pf-row">
+            <input id="pfName" type="text" placeholder="名称（可选），如 我的 OpenRouter" maxlength="32">
+          </div>
+          <div class="pf-row">
+            <input id="pfBase" type="text" placeholder="Base URL，如 https://api.openai.com/v1" spellcheck="false">
+          </div>
+          <div class="pf-row pf-key">
+            <input id="pfKey" type="password" placeholder="API Key" autocomplete="off" spellcheck="false">
+            <button class="pf-eye" id="pfToggleKey" type="button" title="显示/隐藏">👁</button>
+          </div>
+          <div class="pf-row">
+            <button class="pf-fetch" id="pfFetch" type="button">⭳ 获取模型</button>
+            <span class="pf-status" id="pfStatus"></span>
+          </div>
+          <div class="pf-models" id="pfModels" hidden>
+            <div class="pf-models-bar">
+              <span id="pfModelsCount"></span>
+              <span class="pf-models-actions">
+                <button type="button" id="pfAll">全选</button>
+                <button type="button" id="pfNone">取消全选</button>
+              </span>
+            </div>
+            <div class="pf-model-list" id="pfModelList"></div>
+          </div>
+          <div class="pf-actions">
+            <button class="primary" id="pfSave" type="submit">保存 Provider</button>
+            <button class="chip" id="pfCancel" type="button" hidden>取消编辑</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
