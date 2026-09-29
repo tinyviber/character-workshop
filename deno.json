@@ -1,0 +1,7 @@
+{
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "build": "vite build",
+    "start": "deno run -A deploy/main.ts"
+  }
+}
