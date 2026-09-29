@@ -42,12 +42,25 @@ interface RefImage {
 interface Generated {
   src: string; // data: 或 http(s) URL
   viaModel?: string;
+  slotId?: number; // 关联的历史槽位，用于高亮选中态
 }
 
 let providers: SavedProvider[] = [];
 let refImage: RefImage | null = null;
-let generated: Generated | null = null;
+let generated: Generated | null = null; // 当前展示/选中的图（= 某个 done 槽位）
 let generating = false;
+
+/** 生成历史槽位：pending → done/failed。仅驻内存，不写 localStorage。 */
+interface Slot {
+  id: number;
+  state: 'pending' | 'done' | 'failed';
+  src?: string;
+  prompt: string;
+  model: string;
+}
+const SLOT_CAP = 12;
+let slots: Slot[] = [];
+let slotSeq = 0;
 
 /* ---------- 通用 ---------- */
 
@@ -67,9 +80,9 @@ function renderMeta() {
   $('#styleTag').textContent = activeChip('style');
   $('#moodTag').textContent = activeChip('mood');
   $('#variationLabel').textContent = ($('#variation') as HTMLInputElement).value + '%';
-  const style = activeChip('style');
+  const key = styleKey();
   $('#stage').className =
-    'stage ' + (style === '像素风' ? 'pixel' : style === '铸币浮雕' ? 'coin' : 'watercolor');
+    'stage ' + (key === 'coin' ? 'coin' : key === 'pixel' ? 'pixel' : 'watercolor');
   $('#seed').textContent = generated?.viaModel ?? 'SEED ' + String(seed).padStart(3, '0');
   $('#previewSub').textContent = generated ? '模型生成结果　·　可继续调整' : '角色概念预览　·　可继续调整';
   $('#notice').textContent = providers.length
@@ -140,6 +153,42 @@ function currentSelection(): { provider: SavedProvider; model: string } | null {
 
 /* ---------- 提示词 ---------- */
 
+/**
+ * 风格注册表：chip 的 data-key → prompt 片段。
+ * requirement 非空时覆盖默认构图要求（如铸币要大头照而非全身立绘）。
+ */
+interface StyleSpec {
+  prompt: string;
+  requirement?: string;
+}
+const STYLE_PROMPTS: Record<string, StyleSpec> = {
+  coin: {
+    prompt:
+      '画风：Q版二次元萌系铸币大头插画，仅保留大头照构图并保留角色原本特色；大而透亮的双瞳（带高光渐变），脸颊淡粉腮红，圆润Q版脸型；柔和平涂色彩加细腻阴影过渡，线条干净流畅，色彩清新通透，整体可爱治愈的日系风格',
+    requirement: '圆形头像/徽章式构图，仅保留头部特写，不要全身像，不要遮挡面部',
+  },
+  pixel: {
+    prompt: '画风：复古像素艺术（pixel art），清晰像素颗粒，有限调色板，轮廓分明',
+  },
+  watercolor: {
+    prompt: '画风：儿童绘本水彩插画，手绘质感，柔和晕染，温暖通透的色彩，可见纸张纹理',
+  },
+  clay: {
+    prompt:
+      '画风：3D 黏土盲盒玩具渲染（clay render, blind box toy），chibi 比例，柔光摄影棚光照，哑光材质，圆润造型，精致可爱',
+  },
+  ink: {
+    prompt: '画风：中国水墨工笔，宣纸质感，墨色浓淡晕染，留白构图，清雅配色',
+  },
+  sticker: {
+    prompt: '画风：美式卡通贴纸，粗描边高饱和配色，die-cut 白边轮廓，表情夸张生动',
+  },
+};
+
+function styleKey(): string {
+  return $<HTMLElement>('[data-kind="style"] .chip.active').dataset.key ?? '';
+}
+
 function buildPrompt(): string {
   const name = ($('#name') as HTMLInputElement).value || '未命名角色';
   const species = activeChip('species');
@@ -147,8 +196,11 @@ function buildPrompt(): string {
   const mood = activeChip('mood');
   const variation = ($('#variation') as HTMLInputElement).value;
   const extra = ($('#refText') as HTMLTextAreaElement).value.trim();
-  const traits = `角色名：「${name}」；原型：${species}；视觉风格：${style}；气质：${mood}；变化幅度：${variation}%（数值越大设计越夸张）。`;
-  const tail = `${extra ? `补充要求：${extra}。` : ''}要求：完整角色立绘/概念设定图，居中构图，干净简洁的背景，画面中不要出现文字或水印。`;
+  const spec = STYLE_PROMPTS[styleKey()];
+  const stylePart = spec?.prompt ?? `视觉风格：${style}`;
+  const requirement = spec?.requirement ?? '完整角色立绘/概念设定图，居中构图';
+  const traits = `角色名：「${name}」；原型：${species}；${stylePart}；气质：${mood}；变化幅度：${variation}%（数值越大设计越夸张）。`;
+  const tail = `${extra ? `补充要求：${extra}。` : ''}要求：${requirement}，干净简洁的背景，画面中不要出现文字或水印。`;
   if (refImage) {
     return `参考这张图片，生成一张角色概念设计图，保持可辨识的角色特征并按以下设定重绘。${traits}${tail}`;
   }
@@ -161,12 +213,15 @@ function setBusy(busy: boolean) {
   generating = busy;
   ($('#generate') as HTMLButtonElement).disabled = busy;
   ($('#shuffle') as HTMLButtonElement).disabled = busy;
+  $<HTMLSelectElement>('#batchCount').disabled = busy;
   $('#spinner').hidden = !busy;
 }
 
-async function generateRemote(prompt: string): Promise<Generated> {
-  const sel = currentSelection();
-  if (!sel) throw new Error('未选择模型');
+/** 单次调用 /api/generate，消费响应里的全部图片（可能一次返回多张）。 */
+async function runGenerate(
+  sel: { provider: SavedProvider; model: string },
+  prompt: string,
+): Promise<string[]> {
   const body: Record<string, unknown> = {
     baseURL: sel.provider.baseURL,
     apiKey: sel.provider.apiKey,
@@ -185,17 +240,76 @@ async function generateRemote(prompt: string): Promise<Generated> {
     const err = (data as { error?: string }).error ?? `HTTP ${res.status}`;
     throw new Error(detail ? `${err}：${detail}` : err);
   }
-  const img = (data as { image?: { base64?: string; url?: string; mediaType?: string } }).image;
-  if (!img) throw new Error('响应中没有图片');
-  const src = img.base64
-    ? `data:${img.mediaType ?? 'image/png'};base64,${img.base64}`
-    : img.url!;
-  return { src, viaModel: sel.model };
+  type Img = { base64?: string; url?: string; mediaType?: string };
+  const raw = (data as { images?: Img[]; image?: Img });
+  const list = Array.isArray(raw.images) && raw.images.length ? raw.images : raw.image ? [raw.image] : [];
+  const srcs = list
+    .map(img => (img.base64 ? `data:${img.mediaType ?? 'image/png'};base64,${img.base64}` : img.url))
+    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (!srcs.length) throw new Error('响应中没有图片');
+  return srcs;
+}
+
+function renderSlots() {
+  const strip = $('#historyStrip');
+  strip.innerHTML = '';
+  for (const s of slots) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'hist-item';
+    if (s.state === 'pending') {
+      item.disabled = true;
+      const spin = document.createElement('span');
+      spin.className = 'hist-spin';
+      item.appendChild(spin);
+      item.title = '生成中…';
+    } else if (s.state === 'failed') {
+      item.disabled = true;
+      item.textContent = '✕';
+      item.title = '生成失败';
+    } else {
+      if (generated && generated.slotId === s.id) item.classList.add('active');
+      const img = document.createElement('img');
+      img.src = s.src!;
+      img.alt = '生成候选';
+      img.title = s.model;
+      item.appendChild(img);
+      item.onclick = () => {
+        generated = { src: s.src!, viaModel: s.model, slotId: s.id };
+        render();
+        renderSlots();
+      };
+    }
+    strip.appendChild(item);
+  }
+  $('#historyWrap').hidden = slots.length === 0;
+}
+
+/** 把一次响应的图片按序填入 pending 槽位；多出的图追加为新槽位。返回消费掉的图片数。 */
+function fillSlots(pendings: Slot[], srcs: string[]): number {
+  let i = 0;
+  for (const s of pendings) {
+    if (s.state === 'pending' && i < srcs.length) {
+      s.state = 'done';
+      s.src = srcs[i];
+      i++;
+    }
+  }
+  for (; i < srcs.length; i++) {
+    const last = pendings[pendings.length - 1];
+    slots.unshift({ id: slotSeq++, state: 'done', src: srcs[i], prompt: last.prompt, model: last.model });
+  }
+  // 容量裁剪：pending 保留，done/failed 只留最近 SLOT_CAP 个
+  const rest = slots.filter(s => s.state !== 'pending').slice(0, SLOT_CAP);
+  slots = [...slots.filter(s => s.state === 'pending'), ...rest];
+  renderSlots();
+  return i;
 }
 
 async function generate() {
   if (generating) return;
-  if (!currentSelection()) {
+  const sel = currentSelection();
+  if (!sel) {
     // 未配置提供方：退回程序化占位图
     seed++;
     generated = null;
@@ -204,15 +318,50 @@ async function generate() {
     return;
   }
   setBusy(true);
+  const want = Math.max(1, Math.min(4, Number($<HTMLSelectElement>('#batchCount').value) || 1));
+  const prompt = buildPrompt(); // 派发时冻结，避免生成中改 chip 导致串味
+  const batch: Slot[] = Array.from({ length: want }, () => ({
+    id: slotSeq++,
+    state: 'pending',
+    prompt,
+    model: sel.model,
+  }));
+  slots = [...batch, ...slots];
+  renderSlots();
+  let firstError: unknown = null;
+  let made = 0; // 实际产出的图片数（含单次响应多出的图）
   try {
-    generated = await generateRemote(buildPrompt());
-    render();
-    toast('生成完成');
+    // 首发可能一次返回多张；失败不急着判死刑，剩余槽位照常补发
+    made += fillSlots(batch, await runGenerate(sel, prompt));
   } catch (err) {
-    toast(`生成失败：${err instanceof Error ? err.message : String(err)}`.slice(0, 120));
-  } finally {
-    setBusy(false);
+    firstError = err;
   }
+  const rest = batch.filter(s => s.state === 'pending');
+  if (rest.length) {
+    await Promise.allSettled(
+      rest.map(async s => {
+        try {
+          made += fillSlots([s], await runGenerate(sel, prompt));
+        } catch (err) {
+          s.state = 'failed';
+          firstError ??= err;
+          renderSlots();
+        }
+      }),
+    );
+  }
+  const done = batch.filter(s => s.state === 'done');
+  const failed = batch.filter(s => s.state === 'failed').length;
+  if (done.length) {
+    generated = { src: done[0].src!, viaModel: sel.model, slotId: done[0].id };
+    toast(failed ? `生成完成 ${made} 张，${failed} 张失败` : `生成完成，共 ${made} 张`);
+  } else {
+    const reason = firstError instanceof Error ? firstError.message : firstError ? String(firstError) : '模型没有返回图片';
+    toast(`生成失败：${reason}`.slice(0, 120));
+  }
+  renderSlots();
+  render();
+  setBusy(false);
 }
 
 /* ---------- 参考图片：上传 / 拖拽 / 粘贴 ---------- */
@@ -493,6 +642,22 @@ function wireProviderModal() {
   $('#providerForm').addEventListener('submit', submitProvider);
   $('#pfCancel').addEventListener('click', resetProviderForm);
 }
+
+/* ---------- 设为参考图（教程两步流水线/精修的手动入口） ---------- */
+
+$('#useAsRef').addEventListener('click', async () => {
+  if (!generated?.src) {
+    toast('先生成或选中一张图');
+    return;
+  }
+  try {
+    // src 可能是会过期/有防盗链的远程 URL，统一转成 dataURL Blob 再入参考图
+    const blob = await (await fetch(generated.src)).blob();
+    setRefImage(blob, '生成图.png');
+  } catch {
+    toast('无法读取该图片（可能已过期或跨域受限）');
+  }
+});
 
 /* ---------- 导出 ---------- */
 

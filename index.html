@@ -41,9 +41,12 @@
           <div class="section">
             <div class="label">视觉风格</div>
             <div class="choices" data-kind="style">
-              <button class="chip active">铸币浮雕</button>
-              <button class="chip">像素风</button>
-              <button class="chip">绘本水彩</button>
+              <button class="chip active" data-key="coin">铸币浮雕</button>
+              <button class="chip" data-key="pixel">像素风</button>
+              <button class="chip" data-key="watercolor">绘本水彩</button>
+              <button class="chip" data-key="clay">盲盒黏土</button>
+              <button class="chip" data-key="ink">国风水墨</button>
+              <button class="chip" data-key="sticker">美式贴纸</button>
             </div>
           </div>
 
@@ -86,6 +89,10 @@
 
           <div class="actions">
             <button class="primary" id="generate">✦　生成新角色</button>
+            <select id="batchCount" class="select batch-count" title="一次生成张数；多张并发，按张消耗额度">
+              <option value="1">×1</option>
+              <option value="4">×4</option>
+            </select>
             <button class="secondary" id="shuffle" title="随机灵感">⤨</button>
           </div>
           <div class="notice" id="notice">当前为本地程序化预览；配置提供方后调用真实模型。</div>
@@ -106,13 +113,20 @@
             <div class="spinner" id="spinner" hidden><div class="spinner-ring"></div><span>模型生成中…</span></div>
             <div class="caption" id="caption">✦　ABYSSAL ORACLE　✦</div>
           </div>
+          <div class="history" id="historyWrap" hidden>
+            <div class="history-head"><span>生成历史</span><span class="hint">点击上图 · 仅本次会话保留</span></div>
+            <div class="history-strip" id="historyStrip"></div>
+          </div>
           <div class="preview-foot">
             <div class="tags">
               <span class="tag" id="styleTag">铸币浮雕</span>
               <span class="tag" id="moodTag">神秘</span>
               <span class="tag">原创概念</span>
             </div>
-            <button class="export" id="export">导出图片</button>
+            <div class="foot-actions">
+              <button class="export" id="useAsRef" type="button" title="把当前图作为参考图继续生成（风格化/精修入口）">设为参考图</button>
+              <button class="export" id="export">导出图片</button>
+            </div>
           </div>
         </section>
       </div>
