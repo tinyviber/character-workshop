@@ -11,13 +11,30 @@ import { ApiError, errorMessage, generate, listModels, normalizeBaseURL, registe
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
+
 async function readBody(req: Request): Promise<Record<string, unknown>> {
+  const declared = Number(req.headers.get('content-length') ?? 0);
+  if (declared > MAX_BODY_BYTES) throw new ApiError(413, '请求体超过 25MB 上限');
   try {
     const body: unknown = await req.json();
     return typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
   } catch {
     return {};
   }
+}
+
+const PRIVATE_IPV4_RE = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/;
+const PRIVATE_IPV6_RE = /^(::1|fe80:|f[cd])/i;
+const LOCAL_HOST_RE = /^(localhost|.*\.localhost|.*\.local|.*\.internal|.*\.lan|home\.arpa)$/i;
+
+/** 公开部署时只允许指向公网 host —— 部署实例够不到用户 LAN，私网地址只会打到平台内网。 */
+function publicBaseURL(raw: unknown): string | null {
+  const baseURL = normalizeBaseURL(raw);
+  if (!baseURL) return null;
+  const host = new URL(baseURL).hostname.replace(/^\[|\]$/g, '');
+  if (LOCAL_HOST_RE.test(host) || PRIVATE_IPV4_RE.test(host) || PRIVATE_IPV6_RE.test(host)) return null;
+  return baseURL;
 }
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
@@ -30,15 +47,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
     if (req.method === 'POST' && url.pathname === '/api/providers/models') {
       const body = await readBody(req);
-      const baseURL = normalizeBaseURL(body.baseURL);
+      const baseURL = publicBaseURL(body.baseURL);
       if (!baseURL || typeof body.apiKey !== 'string' || !body.apiKey) {
-        return json({ error: '需要合法的 baseURL 与 apiKey' }, 400);
+        return json({ error: '需要合法的公网 baseURL 与 apiKey' }, 400);
       }
       return json({ models: await listModels(baseURL, body.apiKey) });
     }
     if (req.method === 'POST' && url.pathname === '/api/generate') {
       const body = await readBody(req);
-      const baseURL = normalizeBaseURL(body.baseURL);
+      const baseURL = publicBaseURL(body.baseURL);
       const { apiKey, model, prompt } = body as { apiKey?: unknown; model?: unknown; prompt?: unknown };
       const image = body.image as { data?: unknown; mediaType?: unknown } | undefined;
       if (
@@ -46,7 +63,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         typeof model !== 'string' || !model ||
         typeof prompt !== 'string' || !prompt.trim()
       ) {
-        return json({ error: '需要 baseURL、apiKey、model、prompt' }, 400);
+        return json({ error: '需要合法的公网 baseURL、apiKey、model、prompt' }, 400);
       }
       const refImage = image && typeof image.data === 'string' && image.data
         ? { data: image.data, mediaType: typeof image.mediaType === 'string' ? image.mediaType : 'image/png' }
@@ -66,6 +83,9 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (url.pathname.startsWith('/api/')) return handleApi(req, url);
   const res = await serveDir(req, { fsRoot: 'dist' });
-  if (res.status === 404) return serveFile(req, 'dist/index.html');
+  // SPA fallback 只服务导航请求 —— 缺失的 JS/CSS 等资源必须返回真正的 404
+  if (res.status === 404 && req.method === 'GET' && (req.headers.get('accept') ?? '').includes('text/html')) {
+    return serveFile(req, 'dist/index.html');
+  }
   return res;
 });
